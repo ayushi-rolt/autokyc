@@ -2,11 +2,11 @@ import type React from "react"
 import type { Metadata } from "next"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
+import { Footer } from "@/components/footer"
 
 export const metadata: Metadata = {
-  title: "v0 App",
-  description: "Created with v0",
-  generator: "v0.dev",
+  title: "My App",
+  description: "Virtual KYC system", // <-- customize this
 }
 
 export default function RootLayout({
@@ -20,6 +20,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           {children}
         </ThemeProvider>
+        <Footer /> {/* ✅ Correct placement */}
       </body>
     </html>
   )
