@@ -5,7 +5,11 @@ from preprocessor import preprocess_image
 from extract_text import extract_text_from_image
 from load_img import load_and_fix_orientation
 
-def get_extracted_text(image_path):
+
+
+if __name__ == "__main__":
+  
+    image_path = r"C:\Users\rushi\OneDrive\Desktop\test_app\ocr_doc_verifier\Untitled.jpg"
     original_image = cv2.imread(image_path)
     resized = resize_image(original_image)
     image = load_and_fix_orientation(image_path)
