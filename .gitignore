@@ -4,3 +4,4 @@ test_app/test_app/venv/
 *.dll
 *.lib
 __pycache__/
+node_modules
