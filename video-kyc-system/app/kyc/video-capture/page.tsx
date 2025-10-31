@@ -132,7 +132,7 @@ export default function VideoCaptureePage() {
               <div className="relative bg-gray-900 rounded-lg overflow-hidden aspect-video">
                 {cameraPermission === "granted" ? (
                   <>
-                    <video ref={videoRef} autoPlay muted className="w-full h-full object-cover" />
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
                     {isRecording && (
                       <div className="absolute top-4 left-4 flex items-center space-x-2">
                         <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>

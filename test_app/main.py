@@ -5,11 +5,17 @@ import os
 import shutil
 import numpy as np
 import cv2
+import io, re
+from google.cloud import vision
+from google.cloud.vision_v1 import types  # for compatibility
 
+# ---------------------------
+# Initialize FastAPI App
+# ---------------------------
+app = FastAPI(title="Face & Document Verification API",
+              description="API for face recognition, age/gender prediction, and document verification")
 
-app = FastAPI(title="Face Recognition API", description="API for face capture, embedding, and verification")
-
-# Allow all CORS for testing purposes
+# Allow CORS (optional for frontend)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,14 +24,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+# ---------------------------
+# ROOT UI
+# ---------------------------
 @app.get("/", response_class=HTMLResponse)
 def root() -> str:
     html_content = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Face Recognition API</title>
+        <title>Face & Document Verification API</title>
         <style>
             body { font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }
             .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -39,50 +47,38 @@ def root() -> str:
     </head>
     <body>
         <div class="container">
-            <h1>🎯 Face Recognition API</h1>
-            <p>Welcome to the Face Recognition API! This API provides endpoints for face capture, embedding generation, and face verification.</p>
-            <h2>Available Endpoints:</n2>
-            <div class="endpoint">
-                <div class="method">POST</div>
-                <div class="url">/capture-selfie/</div>
-                <p>Upload a selfie image</p>
-            </div>
-            <div class="endpoint">
-                <div class="method">GET</div>
-                <div class="url">/embedding-from-selfie/</div>
-                <p>Generate face embedding from the saved selfie</p>
-            </div>
-            <div class="endpoint">
-                <div class="method">POST</div>
-                <div class="url">/verify-face/</div>
-                <p>Upload a reference image and verify it against the saved selfie</p>
-            </div>
-            <div class="endpoint">
-                <div class="method">POST</div>
-                <div class="url">/predict-age-gender/</div>
-                <p>Predict age and gender from an image</p>
-            </div>
-            <div class="docs-link">
-                <a href="/docs">📖 View Interactive API Documentation</a>
-            </div>
+            <h1>🎯 Face & Document Verification API</h1>
+            <p>This API provides endpoints for:</p>
+            <ul>
+                <li>Face capture and verification</li>
+                <li>Age/Gender prediction</li>
+                <li>PAN/Aadhaar document OCR extraction</li>
+            </ul>
+
+            <h2>Available Endpoints:</h2>
+            <div class="endpoint"><div class="method">POST</div><div class="url">/capture-selfie/</div></div>
+            <div class="endpoint"><div class="method">GET</div><div class="url">/embedding-from-selfie/</div></div>
+            <div class="endpoint"><div class="method">POST</div><div class="url">/verify-face/</div></div>
+            <div class="endpoint"><div class="method">POST</div><div class="url">/predict-age-gender/</div></div>
+            <div class="endpoint"><div class="method">POST</div><div class="url">/verify-document/</div></div>
+
+            <div class="docs-link"><a href="/docs">📖 Open Swagger Docs</a></div>
         </div>
     </body>
     </html>
     """
     return html_content
 
-
+# ---------------------------
+# FACE RECOGNITION ENDPOINTS
+# ---------------------------
 @app.post("/capture-selfie/")
 async def capture_selfie(file: UploadFile = File(...)):
     try:
         file_location = os.path.join(os.getcwd(), "selfie.jpg")
         with open(file_location, "wb") as f:
             f.write(await file.read())
-        return {
-            "message": "Selfie uploaded successfully",
-            "filename": file.filename,
-            "saved_as": "selfie.jpg",
-        }
+        return {"message": "Selfie uploaded successfully", "filename": file.filename, "saved_as": "selfie.jpg"}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
@@ -92,7 +88,6 @@ def get_embedding():
     if not os.path.exists("selfie.jpg"):
         return JSONResponse(status_code=404, content={"error": "No selfie found. Please capture a selfie first."})
     try:
-        # Placeholder: replace with real embedding logic
         dummy_embedding = np.random.rand(128).tolist()
         return {"embedding": dummy_embedding, "message": "Face embedding generated successfully"}
     except Exception as exc:
@@ -108,22 +103,18 @@ async def verify_face(reference_img: UploadFile = File(...)):
         if not os.path.exists("selfie.jpg"):
             return JSONResponse(status_code=404, content={"error": "No selfie found. Please capture a selfie first."})
 
-        # Placeholder matching
         similarity = float(np.random.uniform(0.3, 0.9))
         result = "Face Verified: Match" if similarity > 0.6 else "Face Mismatch: Verification Failed"
-        return {
-            "similarity": round(similarity, 4),
-            "result": result,
-            "message": "Face verification completed",
-        }
+        return {"similarity": round(similarity, 4), "result": result, "message": "Face verification completed"}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
     finally:
         if os.path.exists("reference.jpg"):
             os.remove("reference.jpg")
 
-
-# ------- Optional: Age/Gender prediction with Caffe models (only if files exist) -------
+# ---------------------------
+# AGE/GENDER PREDICTION (Caffe)
+# ---------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "age_gender", "models")
 
@@ -153,9 +144,7 @@ if models_available():
         if img is None:
             return JSONResponse(content={"error": "Invalid image"}, status_code=400)
 
-        blob = cv2.dnn.blobFromImage(
-            img, 1.0, (227, 227), (78.426, 87.768, 114.895), swapRB=False
-        )
+        blob = cv2.dnn.blobFromImage(img, 1.0, (227, 227), (78.426, 87.768, 114.895), swapRB=False)
 
         gender_net.setInput(blob)
         gender_preds = gender_net.forward()
@@ -169,74 +158,49 @@ if models_available():
 else:
     @app.post("/predict-age-gender/")
     async def predict_age_gender_unavailable(_: UploadFile = File(...)):
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": "Age/Gender models not found.",
-                "expected_paths": [AGE_PROTO, AGE_MODEL, GENDER_PROTO, GENDER_MODEL],
-            },
-        )
+        return JSONResponse(status_code=503, content={
+            "error": "Age/Gender models not found.",
+            "expected_paths": [AGE_PROTO, AGE_MODEL, GENDER_PROTO, GENDER_MODEL],
+        })
+
+# ---------------------------
+# DOCUMENT VERIFICATION (OCR)
+# ---------------------------
+client = vision.ImageAnnotatorClient()
+
+def extract_text_from_image(file_bytes):
+    image = types.Image(content=file_bytes)
+    response = client.text_detection(image=image)
+    texts = response.text_annotations
+    return texts[0].description if texts else ""
+
+def extract_fields(text):
+    data = {}
+    pan_match = re.search(r'[A-Z]{5}[0-9]{4}[A-Z]', text)
+    if pan_match:
+        data['pan_number'] = pan_match.group()
+    aadhaar_match = re.search(r'\d{4}\s\d{4}\s\d{4}', text)
+    if aadhaar_match:
+        data['aadhaar_number'] = aadhaar_match.group()
+    name_match = re.search(r'^To\n[^\n]+\n([A-Za-z ]+)', text, re.MULTILINE)
+    if name_match:
+        data['name'] = name_match.group(1).strip()
+    dob_match = re.search(r'DOB\s*:\s*(\d{2}/\d{2}/\d{4})', text)
+    if dob_match:
+        data['dob'] = dob_match.group(1)
+    return data
 
 
-@app.post("/upload-video/")
-async def upload_video(file: UploadFile = File(...)):
+@app.post("/verify-document/")
+async def verify_document(file: UploadFile = File(...)):
     try:
-        # Create uploads directory if it doesn't exist
-        uploads_dir = os.path.join(os.getcwd(), "uploads")
-        os.makedirs(uploads_dir, exist_ok=True)
-        
-        # Save video file
-        video_filename = f"video_{file.filename}"
-        file_location = os.path.join(uploads_dir, video_filename)
-        with open(file_location, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-        
-        return {
-            "message": "Video uploaded successfully",
-            "filename": file.filename,
-            "saved_as": video_filename,
-            "path": file_location,
-        }
+        contents = await file.read()
+        text = extract_text_from_image(contents)
+        data = extract_fields(text)
+        return {"verified": True if data else False, "fields": data, "raw_text": text}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
-
-@app.post("/upload-document/")
-async def upload_document(file: UploadFile = File(...), doc_type: str = "aadhaar"):
-    try:
-        # Create uploads directory if it doesn't exist
-        uploads_dir = os.path.join(os.getcwd(), "uploads")
-        os.makedirs(uploads_dir, exist_ok=True)
-        
-        # Save document file
-        doc_filename = f"{doc_type}_{file.filename}"
-        file_location = os.path.join(uploads_dir, doc_filename)
-        with open(file_location, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-        
-        # Simulate OCR processing (replace with actual OCR logic)
-        import time
-        time.sleep(1)  # Simulate processing time
-        
-        # Mock OCR results based on doc_type
-        ocr_result = {
-            "name": "John Doe",
-            "dob": "01/01/1990",
-        }
-        
-        if doc_type == "aadhaar":
-            ocr_result["aadhaarNumber"] = "XXXX-XXXX-1234"
-            ocr_result["address"] = "123 Main Street, City, State"
-        elif doc_type == "pan":
-            ocr_result["panNumber"] = "ABCDE1234F"
-        
-        return {
-            "message": "Document uploaded and processed successfully",
-            "filename": file.filename,
-            "saved_as": doc_filename,
-            "ocr_result": ocr_result,
-        }
-    except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
+# ---------------------------
+# RUN: uvicorn main:app --reload
+# ---------------------------

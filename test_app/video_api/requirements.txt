@@ -1,0 +1,148 @@
+# # Core
+# numpy
+# opencv-python
+# Pillow
+# torch
+# torchvision
+
+
+# # Face recognition / feature extraction (e.g., MobileFaceNet)
+# MobileFaceNet
+# scikit-learn
+# imutils
+
+# matplotlib
+# scipy
+# tqdm
+# opencv-python
+# pillow
+# torch
+# torchvision
+# numpy
+# scikit-image
+# torchsummary
+# imgaug
+
+
+
+
+
+
+
+
+
+aiohappyeyeballs        
+aiohttp                  
+aiosignal               
+annotated-types         
+anyio                    
+astor                   
+attrs                    
+beautifulsoup4           
+cachetools              
+certifi                  
+cffi                     
+chardet                 
+charset-normalizer      
+colorama                
+colorlog                
+cryptography             
+cssselect               
+cssutils                 
+dataclasses-json        
+decorator               
+distro                  
+einops                  
+et_xmlfile              
+filelock                 
+frozenlist              
+fsspec                   
+ftfy                    
+GPUtil                  
+greenlet                
+h11                      
+httpcore                
+httpx                    
+httpx-sse               
+huggingface-hub          
+idna                   
+imagesize               
+iopath                   
+Jinja2                  
+jiter                    
+joblib                  
+jsonpatch              
+jsonpointer             
+langchain                
+langchain-community      
+langchain-core           
+langchain-openai         
+langchain-text-splitters 
+langsmith                
+layoutparser             
+lxml                     
+MarkupSafe               
+marshmallow              
+more-itertools           
+multidict                
+mypy_extensions          
+numpy                    
+openai                   
+opencv-contrib-python    
+opencv-python            
+openpyxl                
+opt-einsum               
+orjson                   
+packaging               
+paddlepaddle             
+pandas                   
+pdf2image                
+pdfminer.six             
+pdfplumber               
+pillow                   
+pip                     
+portalocker              
+premailer                
+prettytable              
+propcache                
+protobuf                 
+py-cpuinfo               
+pyclipper                
+pycparser               
+pydantic                 
+pydantic_core            
+pydantic-settings        
+pypdfium2                
+python-dateutil          
+python-dotenv            
+pytz                     
+pywin32                
+PyYAML                   
+regex                  
+requests                 
+requests-toolbelt        
+ruamel.yaml              
+ruamel.yaml.clib         
+scikit-learn            
+scipy                    
+setuptools               
+shapely                 
+six                      
+sniffio                 
+soupsieve             
+SQLAlchemy               
+tenacity                
+threadpoolctl           
+tiktoken                 
+tokenizers               
+tqdm                     
+typing_extensions        
+typing-inspect          
+typing-inspection       
+tzdata                   
+ujson                    
+urllib3                 
+wcwidth                  
+wheel                    
+yarl                     
+zstandard                
