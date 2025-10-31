@@ -178,3 +178,65 @@ else:
         )
 
 
+@app.post("/upload-video/")
+async def upload_video(file: UploadFile = File(...)):
+    try:
+        # Create uploads directory if it doesn't exist
+        uploads_dir = os.path.join(os.getcwd(), "uploads")
+        os.makedirs(uploads_dir, exist_ok=True)
+        
+        # Save video file
+        video_filename = f"video_{file.filename}"
+        file_location = os.path.join(uploads_dir, video_filename)
+        with open(file_location, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        
+        return {
+            "message": "Video uploaded successfully",
+            "filename": file.filename,
+            "saved_as": video_filename,
+            "path": file_location,
+        }
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@app.post("/upload-document/")
+async def upload_document(file: UploadFile = File(...), doc_type: str = "aadhaar"):
+    try:
+        # Create uploads directory if it doesn't exist
+        uploads_dir = os.path.join(os.getcwd(), "uploads")
+        os.makedirs(uploads_dir, exist_ok=True)
+        
+        # Save document file
+        doc_filename = f"{doc_type}_{file.filename}"
+        file_location = os.path.join(uploads_dir, doc_filename)
+        with open(file_location, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        
+        # Simulate OCR processing (replace with actual OCR logic)
+        import time
+        time.sleep(1)  # Simulate processing time
+        
+        # Mock OCR results based on doc_type
+        ocr_result = {
+            "name": "John Doe",
+            "dob": "01/01/1990",
+        }
+        
+        if doc_type == "aadhaar":
+            ocr_result["aadhaarNumber"] = "XXXX-XXXX-1234"
+            ocr_result["address"] = "123 Main Street, City, State"
+        elif doc_type == "pan":
+            ocr_result["panNumber"] = "ABCDE1234F"
+        
+        return {
+            "message": "Document uploaded and processed successfully",
+            "filename": file.filename,
+            "saved_as": doc_filename,
+            "ocr_result": ocr_result,
+        }
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
