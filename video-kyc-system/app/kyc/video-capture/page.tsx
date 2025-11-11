@@ -1,48 +1,52 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect } from "react" // Ensure useEffect is imported
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
-import { Video, Play, Square, CheckCircle, AlertCircle, Camera, ArrowLeft, ArrowRight } from "lucide-react"
+import { Video, CheckCircle, AlertCircle, Camera, ArrowLeft, ArrowRight } from "lucide-react"
 import Link from "next/link"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 export default function VideoCaptureePage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const [stream, setStream] = useState<MediaStream | null>(null)
-  const [isRecording, setIsRecording] = useState(false)
-  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
   const [cameraPermission, setCameraPermission] = useState<"granted" | "denied" | "prompt">("prompt")
   const [livenessDetected, setLivenessDetected] = useState(false)
-  const [recordingTime, setRecordingTime] = useState(0)
-  const [currentStep, setCurrentStep] = useState(1)
+  const [selfieTaken, setSelfieTaken] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
+  const currentStep = 1
+
+  // --- 1. THIS IS THE FIX ---
+  // Use a useEffect to safely attach the stream to the video element.
+  // This runs after the component renders and when the 'stream' state changes.
   useEffect(() => {
-    let interval: NodeJS.Timeout
-    if (isRecording) {
-      interval = setInterval(() => {
-        setRecordingTime((prev) => prev + 1)
-      }, 1000)
+    if (stream && videoRef.current) {
+      videoRef.current.srcObject = stream
+      // Explicitly call play() in case autoPlay fails
+      videoRef.current.play().catch(err => {
+        console.error("Video play failed:", err)
+      })
     }
-    return () => clearInterval(interval)
-  }, [isRecording])
+  }, [stream]) // Dependency: Run this effect when 'stream' changes
 
   const startCamera = async () => {
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: { width: 1280, height: 720 },
-        audio: true,
+        audio: false, 
       })
-      setStream(mediaStream)
+      // 2. We ONLY update the state here. The useEffect will handle the rest.
+      setStream(mediaStream) 
       setCameraPermission("granted")
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream
-      }
+      
+      // (The line 'videoRef.current.srcObject = ...' was removed from here)
+      
       // Simulate liveness detection after 2 seconds
       setTimeout(() => setLivenessDetected(true), 2000)
     } catch (error) {
@@ -51,47 +55,57 @@ export default function VideoCaptureePage() {
     }
   }
 
-  const startRecording = () => {
-    if (stream) {
-      const mediaRecorder = new MediaRecorder(stream)
-      const chunks: BlobPart[] = []
+  // --- (Rest of the file is unchanged) ---
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunks.push(event.data)
+  const capturePhotoAndUpload = () => {
+    if (!videoRef.current) return
+
+    setIsProcessing(true)
+    setError(null)
+
+    const canvas = document.createElement("canvas")
+    canvas.width = videoRef.current.videoWidth
+    canvas.height = videoRef.current.videoHeight
+    const context = canvas.getContext("2d")
+    context?.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height)
+
+    canvas.toBlob(async (blob) => {
+      if (!blob) {
+        setError("Failed to capture image.")
+        setIsProcessing(false)
+        return
+      }
+
+      const formData = new FormData()
+      formData.append("file", blob, "selfie.jpg") 
+
+      try {
+        const response = await fetch("http://127.0.0.1:8000/capture-selfie/", {
+          method: "POST",
+          body: formData,
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to upload selfie.")
         }
+
+        setSelfieTaken(true)
+        
+        stream?.getTracks().forEach(track => track.stop());
+        setStream(null)
+
+      } catch (err: any) {
+        setError(err.message)
+      } finally {
+        setIsProcessing(false)
       }
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: "video/webm" })
-        setRecordedBlob(blob)
-      }
-
-      mediaRecorderRef.current = mediaRecorder
-      mediaRecorder.start()
-      setIsRecording(true)
-      setRecordingTime(0)
-    }
-  }
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop()
-      setIsRecording(false)
-    }
+    }, "image/jpeg", 0.9)
   }
 
   const proceedToDocuments = () => {
-    if (recordedBlob) {
-      // Store video blob in session storage or upload to server
-      router.push("/kyc/document-upload")
-    }
-  }
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, "0")}`
+    router.push("/kyc/document-upload")
   }
 
   return (
@@ -125,20 +139,21 @@ export default function VideoCaptureePage() {
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
                 <Video className="h-5 w-5" />
-                <span>Video Capture</span>
+                <span>Live Selfie Capture</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="relative bg-gray-900 rounded-lg overflow-hidden aspect-video">
                 {cameraPermission === "granted" ? (
                   <>
-                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                    {isRecording && (
-                      <div className="absolute top-4 left-4 flex items-center space-x-2">
-                        <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                        <span className="text-white text-sm font-medium">REC {formatTime(recordingTime)}</span>
-                      </div>
-                    )}
+                    {/* Make sure these props are here: autoPlay, playsInline, muted */}
+                    <video 
+                      ref={videoRef} 
+                      autoPlay 
+                      playsInline 
+                      muted 
+                      className="w-full h-full object-cover" 
+                    />
                     <div className="absolute top-4 right-4">
                       {livenessDetected ? (
                         <Badge variant="default" className="bg-green-500">
@@ -163,6 +178,13 @@ export default function VideoCaptureePage() {
                     </p>
                   </div>
                 )}
+                
+                {selfieTaken && (
+                    <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center">
+                        <CheckCircle className="h-16 w-16 text-green-500 mb-4" />
+                        <p className="text-white text-xl font-medium">Selfie Captured!</p>
+                    </div>
+                )}
               </div>
 
               <div className="flex justify-center space-x-4">
@@ -172,33 +194,29 @@ export default function VideoCaptureePage() {
                     Enable Camera
                   </Button>
                 ) : (
-                  <>
-                    {!isRecording ? (
-                      <Button
-                        onClick={startRecording}
-                        size="lg"
-                        disabled={!livenessDetected}
-                        className="bg-red-600 hover:bg-red-700"
-                      >
-                        <Play className="h-4 w-4 mr-2" />
-                        Start Recording
-                      </Button>
-                    ) : (
-                      <Button onClick={stopRecording} size="lg" variant="outline">
-                        <Square className="h-4 w-4 mr-2" />
-                        Stop Recording
-                      </Button>
-                    )}
-                  </>
+                  !selfieTaken && (
+                    <Button
+                      onClick={capturePhotoAndUpload}
+                      size="lg"
+                      disabled={!livenessDetected || isProcessing}
+                      className="bg-red-600 hover:bg-red-700"
+                    >
+                      <Camera className="h-4 w-4 mr-2" />
+                      {isProcessing ? "Processing..." : "Capture Selfie"}
+                    </Button>
+                  )
                 )}
               </div>
 
-              {recordedBlob && (
+              {error && (
+                <div className="flex items-center space-x-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertCircle className="h-5 w-5 text-red-600" />
+                  <span className="text-red-800 text-sm">{error}</span>
+                </div>
+              )}
+
+              {selfieTaken && (
                 <div className="text-center">
-                  <Badge variant="default" className="bg-green-500 mb-4">
-                    <CheckCircle className="h-3 w-3 mr-1" />
-                    Video Recorded Successfully
-                  </Badge>
                   <Button onClick={proceedToDocuments} size="lg" className="w-full">
                     Continue to Document Upload
                     <ArrowRight className="h-4 w-4 ml-2" />
@@ -211,59 +229,38 @@ export default function VideoCaptureePage() {
           {/* Instructions Section */}
           <Card>
             <CardHeader>
-              <CardTitle>Recording Instructions</CardTitle>
+              <CardTitle>Capture Instructions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-3">
                 <div className="flex items-start space-x-3">
-                  <div className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-medium">
-                    1
-                  </div>
+                  <div className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-medium">1</div>
                   <div>
                     <p className="font-medium">Position yourself properly</p>
                     <p className="text-sm text-gray-600">Ensure your face is clearly visible and well-lit</p>
                   </div>
                 </div>
-
                 <div className="flex items-start space-x-3">
-                  <div className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-medium">
-                    2
-                  </div>
+                  <div className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-medium">2</div>
                   <div>
                     <p className="font-medium">Wait for liveness detection</p>
                     <p className="text-sm text-gray-600">The system will verify you are a real person</p>
                   </div>
                 </div>
-
                 <div className="flex items-start space-x-3">
-                  <div className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-medium">
-                    3
-                  </div>
+                  <div className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-medium">3</div>
                   <div>
-                    <p className="font-medium">Record a 10-15 second video</p>
-                    <p className="text-sm text-gray-600">Speak clearly and look directly at the camera</p>
-                  </div>
-                </div>
-
-                <div className="flex items-start space-x-3">
-                  <div className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-medium">
-                    4
-                  </div>
-                  <div>
-                    <p className="font-medium">Say the following phrase</p>
-                    <p className="text-sm text-gray-600 font-mono bg-gray-100 p-2 rounded">
-                      "I am [Your Full Name] and I am completing my KYC verification today"
-                    </p>
+                    <p className="font-medium">Capture your selfie</p>
+                    <p className="text-sm text-gray-600">Click the "Capture Selfie" button when ready. Hold still.</p>
                   </div>
                 </div>
               </div>
-
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <h4 className="font-medium text-blue-900 mb-2">Tips for best results:</h4>
                 <ul className="text-sm text-blue-800 space-y-1">
                   <li>• Use good lighting (avoid backlighting)</li>
-                  <li>• Keep your device steady</li>
-                  <li>• Speak clearly and at normal pace</li>
+                  <li>• Look directly at the camera</li>
+                  <li>• Hold your device steady</li>
                   <li>• Ensure stable internet connection</li>
                 </ul>
               </div>

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Upload, Camera, FileText, CheckCircle, ArrowLeft, ArrowRight, Scan } from "lucide-react"
+import { Upload, Camera, FileText, CheckCircle, ArrowLeft, ArrowRight, Scan, AlertCircle } from "lucide-react" // Added AlertCircle
 import Link from "next/link"
 import { ThemeToggle } from "@/components/theme-toggle"
 
@@ -27,29 +27,72 @@ export default function DocumentUploadPage() {
     pan: false,
   })
 
+  // --- 1. MODIFIED: Added error state ---
+  const [errors, setErrors] = useState({
+    aadhaar: null as string | null,
+    pan: null as string | null,
+  })
+
+  // --- 2. REPLACED: Mock function with real API call ---
   const handleFileUpload = async (type: "aadhaar" | "pan", file: File) => {
     setDocuments((prev) => ({ ...prev, [type]: file }))
     setProcessing((prev) => ({ ...prev, [type]: true }))
+    setOcrResults((prev) => ({ ...prev, [type]: null })) // Clear previous results
+    setErrors((prev) => ({ ...prev, [type]: null })) // Clear previous errors
 
-    // Simulate OCR processing
-    setTimeout(() => {
-      const mockOcrResult =
-        type === "aadhaar"
-          ? {
-              name: "John Doe",
-              aadhaarNumber: "XXXX-XXXX-1234",
-              dob: "01/01/1990",
-              address: "123 Main Street, City, State",
-            }
-          : {
-              name: "John Doe",
-              panNumber: "ABCDE1234F",
-              dob: "01/01/1990",
-            }
+    // FormData is used to send files
+    const formData = new FormData()
+    // The key "file" MUST match your FastAPI argument name:
+    // async def verify_document(file: UploadFile = File(...)):
+    formData.append("file", file)
 
-      setOcrResults((prev) => ({ ...prev, [type]: mockOcrResult }))
+    try {
+      // Make the fetch request to your running FastAPI server
+      const response = await fetch("http://127.0.0.1:8000/verify-document/", {
+        method: "POST",
+        body: formData,
+      })
+
+      const data = await response.json() // Expects { verified, fields, raw_text }
+
+      if (!response.ok) {
+        throw new Error(data.error || "Server error, please try again.")
+      }
+      if (!data.verified || !data.fields || Object.keys(data.fields).length === 0) {
+        throw new Error("Could not extract any fields. Please try a clearer image.")
+      }
+
+      // **IMPORTANT: Data Transformation**
+      // Your API returns { fields: { pan_number: "..." } }
+      // Your UI expects { panNumber: "..." }
+      // We must map the snake_case (API) to camelCase (UI)
+      
+      const apiFields = data.fields
+      let transformedResult: any = {}
+
+      if (type === "aadhaar") {
+        transformedResult = {
+          name: apiFields.name || "N/A",
+          aadhaarNumber: apiFields.aadhaar_number || "N/A", // Map snake_case
+          dob: apiFields.dob || "N/A",
+          address: "N/A", // Your API doesn't extract address, so we default
+        }
+      } else {
+        transformedResult = {
+          name: apiFields.name || "N/A",
+          panNumber: apiFields.pan_number || "N/A", // Map snake_case
+          dob: apiFields.dob || "N/A",
+        }
+      }
+      
+      setOcrResults((prev) => ({ ...prev, [type]: transformedResult }))
+
+    } catch (err: any) {
+      console.error("OCR processing failed:", err)
+      setErrors((prev) => ({ ...prev, [type]: err.message }))
+    } finally {
       setProcessing((prev) => ({ ...prev, [type]: false }))
-    }, 2000)
+    }
   }
 
   const captureDocument = async (type: "aadhaar" | "pan") => {
@@ -162,6 +205,14 @@ export default function DocumentUploadPage() {
                         <span className="text-green-800">Aadhaar card uploaded successfully</span>
                       </div>
 
+                      {/* --- 3. ADDED: Error message display --- */}
+                      {errors.aadhaar && (
+                        <div className="flex items-center space-x-3 p-4 bg-red-50 border border-red-200 rounded-lg">
+                          <AlertCircle className="h-5 w-5 text-red-600" />
+                          <span className="text-red-800">{errors.aadhaar}</span>
+                        </div>
+                      )}
+                      
                       {processing.aadhaar ? (
                         <div className="flex items-center space-x-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                           <Scan className="h-5 w-5 text-blue-600 animate-spin" />
@@ -240,6 +291,14 @@ export default function DocumentUploadPage() {
                         <CheckCircle className="h-5 w-5 text-green-600" />
                         <span className="text-green-800">PAN card uploaded successfully</span>
                       </div>
+
+                      {/* --- 3. ADDED: Error message display --- */}
+                      {errors.pan && (
+                        <div className="flex items-center space-x-3 p-4 bg-red-50 border border-red-200 rounded-lg">
+                          <AlertCircle className="h-5 w-5 text-red-600" />
+                          <span className="text-red-800">{errors.pan}</span>
+                        </div>
+                      )}
 
                       {processing.pan ? (
                         <div className="flex items-center space-x-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">

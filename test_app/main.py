@@ -7,7 +7,10 @@ import numpy as np
 import cv2
 import io, re
 
+# --- MODIFIED SECTION ---
 # Try to import OCR libraries, use fallback if not available
+# (We keep this part, but we will ONLY use Google Vision for the endpoint
+# as your original code did)
 try:
     from google.cloud import vision
     from google.cloud.vision_v1 import types
@@ -23,6 +26,8 @@ try:
 except ImportError:
     TESSERACT_AVAILABLE = False
     print("Tesseract not available, using mock OCR")
+# --- END MODIFIED SECTION ---
+
 
 # ---------------------------
 # Initialize FastAPI App
@@ -180,85 +185,63 @@ else:
 
 # ---------------------------
 # DOCUMENT VERIFICATION (OCR)
+# --- THIS ENTIRE SECTION IS REVERTED TO YOUR ORIGINAL CODE ---
 # ---------------------------
-# Initialize OCR client if available
 if GOOGLE_VISION_AVAILABLE:
-    try:
-        client = vision.ImageAnnotatorClient()
-    except Exception as e:
-        print(f"Could not initialize Google Vision client: {e}")
-        GOOGLE_VISION_AVAILABLE = False
+    client = vision.ImageAnnotatorClient()
+else:
+    # Handle the case where Google Vision is not installed at all
+    client = None 
+    print("WARNING: Google Cloud Vision client not initialized. /verify-document/ will fail.")
 
-def extract_text_from_image(file_bytes, doc_type="general"):
-    """Extract text from image using available OCR method"""
-    if GOOGLE_VISION_AVAILABLE:
-        try:
-            image = types.Image(content=file_bytes)
-            response = client.text_detection(image=image)
-            texts = response.text_annotations
-            return texts[0].description if texts else ""
-        except Exception as e:
-            print(f"Google Vision OCR failed: {e}, falling back")
-    
-    if TESSERACT_AVAILABLE:
-        try:
-            img = Image.open(io.BytesIO(file_bytes))
-            text = pytesseract.image_to_string(img)
-            return text
-        except Exception as e:
-            print(f"Tesseract OCR failed: {e}, using mock")
-    
-    # Fallback: Mock OCR results
-    if doc_type == "aadhaar":
-        return "JOHN DOE\nXXXX XXXX 1234\n01/01/1990\n123 Main Street, City, State"
-    elif doc_type == "pan":
-        return "JOHN DOE\nABCDE1234F\n01/01/1990"
-    else:
-        return "Sample document text"
+def extract_text_from_image(file_bytes):
+    if not client:
+        raise Exception("Google Cloud Vision client is not available.")
+    image = types.Image(content=file_bytes)
+    response = client.text_detection(image=image)
+    texts = response.text_annotations
+    return texts[0].description if texts else ""
 
-def extract_fields(text, doc_type="general"):
-    """Extract structured fields from OCR text"""
+def extract_fields(text):
+    """
+    This is your original, "fairly good" regex function.
+    """
     data = {}
     
-    # Extract PAN number
-    pan_match = re.search(r'[A-Z]{5}[0-9]{4}[A-Z]', text, re.IGNORECASE)
+    # Your PAN regex
+    pan_match = re.search(r'[A-Z]{5}[0-9]{4}[A-Z]', text)
     if pan_match:
-        data['panNumber'] = pan_match.group().upper()
+        # Key is 'pan_number' as in your original code
+        data['pan_number'] = pan_match.group() 
     
-    # Extract Aadhaar number
-    aadhaar_match = re.search(r'\d{4}\s?\d{4}\s?\d{4}', text)
+    # Your Aadhaar regex
+    aadhaar_match = re.search(r'\d{4}\s\d{4}\s\d{4}', text)
     if aadhaar_match:
-        data['aadhaarNumber'] = aadhaar_match.group()
+        # Key is 'aadhaar_number'
+        data['aadhaar_number'] = aadhaar_match.group()
     
-    # Extract name (various patterns)
-    name_patterns = [
-        r'(?:^|\n)([A-Z][A-Z\s]{2,})',
-        r'Name[:\s]+([A-Z][A-Za-z\s]+)',
-        r'([A-Z][A-Z\s]+DOE)',
-    ]
-    for pattern in name_patterns:
-        name_match = re.search(pattern, text)
-        if name_match and len(name_match.group(1).strip()) > 3:
-            data['name'] = name_match.group(1).strip()
-            break
+    # Your Name regex
+    name_match = re.search(r'^To\n[^\n]+\n([A-Za-z ]+)', text, re.MULTILINE)
+    if name_match:
+        data['name'] = name_match.group(1).strip()
     
-    # Extract DOB
-    dob_match = re.search(r'(\d{2}[/-]\d{2}[/-]\d{4})', text)
+    # Your DOB regex
+    dob_match = re.search(r'DOB\s*:\s*(\d{2}/\d{2}/\d{4})', text)
     if dob_match:
-        data['dob'] = dob_match.group(1).replace('-', '/')
-    
-    # Extract address (for Aadhaar)
-    if doc_type == "aadhaar":
-        address_match = re.search(r'\d{2}/\d{2}/\d{4}\n([^\n]+\n[^\n]+)', text)
-        if address_match:
-            data['address'] = address_match.group(1).strip()
-    
+        data['dob'] = dob_match.group(1)
+        
     return data
 
 
 @app.post("/verify-document/")
 async def verify_document(file: UploadFile = File(...)):
-    """Document verification endpoint (original)"""
+    """
+    This is your original endpoint, restored.
+    It returns the JSON format your React UI expects:
+    {"verified": ..., "fields": ..., "raw_text": ...}
+    """
+    if not GOOGLE_VISION_AVAILABLE or not client:
+         return JSONResponse(status_code=503, content={"error": "Google Cloud Vision is not installed or configured."})
     try:
         contents = await file.read()
         text = extract_text_from_image(contents)
@@ -267,38 +250,12 @@ async def verify_document(file: UploadFile = File(...)):
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
+# --- The blundered '/upload-document/' endpoint has been removed. ---
+
 # ---------------------------
 # RUN: uvicorn main:app --reload
 # ---------------------------
-# API ENDPOINTS
-# ---------------------------
 
-@app.post("/upload-document/")
-async def upload_document(file: UploadFile = File(...), doc_type: str = "aadhaar"):
-    """Upload Aadhaar or PAN document, extract info cleanly."""
-    try:
-        uploads_dir = os.path.join(os.getcwd(), "uploads")
-        os.makedirs(uploads_dir, exist_ok=True)
 
-        doc_filename = f"{doc_type}_{file.filename}"
-        file_location = os.path.join(uploads_dir, doc_filename)
-
-        with open(file_location, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-
-        with open(file_location, "rb") as f:
-            file_bytes = f.read()
-
-        # OCR + field extraction
-        text = extract_text_from_image(file_bytes, doc_type)
-        ocr_result = extract_fields(text, doc_type)
-
-        return {
-            "message": f"{doc_type.title()} card processed successfully",
-            "filename": file.filename,
-            "saved_as": doc_filename,
-            "ocr_result": ocr_result,
-        }
-
-    except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+# set HTTPS_PROXY=http://your-proxy-address:port
+# set HTTP_PROXY=http://your-proxy-address:port
