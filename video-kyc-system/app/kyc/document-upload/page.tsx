@@ -6,100 +6,93 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Upload, Camera, FileText, CheckCircle, ArrowLeft, ArrowRight, Scan, AlertCircle } from "lucide-react" // Added AlertCircle
+import { Upload, Camera, FileText, CheckCircle, ArrowLeft, ArrowRight, Scan, AlertCircle } from "lucide-react"
 import Link from "next/link"
 import { ThemeToggle } from "@/components/theme-toggle"
+
+// Ensure this matches your FastAPI port
+const FASTAPI_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000"
 
 export default function DocumentUploadPage() {
   const router = useRouter()
   const aadhaarInputRef = useRef<HTMLInputElement>(null)
   const panInputRef = useRef<HTMLInputElement>(null)
+  
   const [documents, setDocuments] = useState({
     aadhaar: null as File | null,
     pan: null as File | null,
   })
+  
   const [ocrResults, setOcrResults] = useState({
     aadhaar: null as any,
     pan: null as any,
   })
+  
   const [processing, setProcessing] = useState({
     aadhaar: false,
     pan: false,
   })
+  
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // --- 1. MODIFIED: Added error state ---
-  const [errors, setErrors] = useState({
-    aadhaar: null as string | null,
-    pan: null as string | null,
-  })
-
-  // --- 2. REPLACED: Mock function with real API call ---
+  // 1. Handle individual file upload and preview (OCR)
   const handleFileUpload = async (type: "aadhaar" | "pan", file: File) => {
+    // Update state to show we have the file
     setDocuments((prev) => ({ ...prev, [type]: file }))
     setProcessing((prev) => ({ ...prev, [type]: true }))
-    setOcrResults((prev) => ({ ...prev, [type]: null })) // Clear previous results
-    setErrors((prev) => ({ ...prev, [type]: null })) // Clear previous errors
-
-    // FormData is used to send files
-    const formData = new FormData()
-    // The key "file" MUST match your FastAPI argument name:
-    // async def verify_document(file: UploadFile = File(...)):
-    formData.append("file", file)
+    setError(null)
 
     try {
-      // Make the fetch request to your running FastAPI server
-      const response = await fetch("http://127.0.0.1:8000/verify-document/", {
+      // Create FormData to send to FastAPI for preview/verification
+      const formData = new FormData()
+      formData.append("file", file) // FastAPI's /verify-document/ expects 'file'
+
+      // Call the Single Document Verification Endpoint
+      const response = await fetch(`${FASTAPI_URL}/verify-document/`, {
         method: "POST",
         body: formData,
       })
 
-      const data = await response.json() // Expects { verified, fields, raw_text }
-
       if (!response.ok) {
-        throw new Error(data.error || "Server error, please try again.")
-      }
-      if (!data.verified || !data.fields || Object.keys(data.fields).length === 0) {
-        throw new Error("Could not extract any fields. Please try a clearer image.")
+        throw new Error("Failed to process document")
       }
 
-      // **IMPORTANT: Data Transformation**
-      // Your API returns { fields: { pan_number: "..." } }
-      // Your UI expects { panNumber: "..." }
-      // We must map the snake_case (API) to camelCase (UI)
+      const data = await response.json()
       
-      const apiFields = data.fields
-      let transformedResult: any = {}
+      // Map the Backend Data to your Frontend UI State
+      const fields = data.fields || {}
+      let formattedResult;
 
       if (type === "aadhaar") {
-        transformedResult = {
-          name: apiFields.name || "N/A",
-          aadhaarNumber: apiFields.aadhaar_number || "N/A", // Map snake_case
-          dob: apiFields.dob || "N/A",
-          address: "N/A", // Your API doesn't extract address, so we default
+        formattedResult = {
+          name: fields.name || "Not detected",
+          aadhaarNumber: fields.aadhaar_number || "Not detected",
+          dob: fields.dob || "Not detected",
+          address: fields.address || "Address extraction not supported yet", 
         }
       } else {
-        transformedResult = {
-          name: apiFields.name || "N/A",
-          panNumber: apiFields.pan_number || "N/A", // Map snake_case
-          dob: apiFields.dob || "N/A",
+        formattedResult = {
+          name: fields.name || "Not detected",
+          panNumber: fields.pan_number || "Not detected",
+          dob: fields.dob || "Not detected",
         }
       }
-      
-      setOcrResults((prev) => ({ ...prev, [type]: transformedResult }))
 
-    } catch (err: any) {
-      console.error("OCR processing failed:", err)
-      setErrors((prev) => ({ ...prev, [type]: err.message }))
+      setOcrResults((prev) => ({ ...prev, [type]: formattedResult }))
+
+    } catch (err) {
+      console.error("OCR Error:", err)
+      setError(`Failed to process ${type}. Please try a clearer photo.`)
     } finally {
       setProcessing((prev) => ({ ...prev, [type]: false }))
     }
   }
 
+  // 2. Camera Capture Handler
   const captureDocument = async (type: "aadhaar" | "pan") => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
-      // In a real implementation, you would show a camera interface
-      // For now, we'll simulate file selection
+      await navigator.mediaDevices.getUserMedia({ video: true })
       if (type === "aadhaar") {
         aadhaarInputRef.current?.click()
       } else {
@@ -107,16 +100,60 @@ export default function DocumentUploadPage() {
       }
     } catch (error) {
       console.error("Camera access denied:", error)
+      setError("Camera access denied. Please use 'Choose File' instead.")
     }
   }
 
-  const proceedToResults = () => {
-    if (documents.aadhaar && documents.pan && ocrResults.aadhaar && ocrResults.pan) {
+  // 3. Final Submission Handler
+  const proceedToResults = async () => {
+    // Validation: Ensure at least ONE document is uploaded
+    if (!documents.aadhaar && !documents.pan) {
+        setError("Please upload at least one document (Aadhaar or PAN) to continue.")
+        return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const userId = sessionStorage.getItem("userId")
+      const finalUserId = userId || "test-user-123" 
+
+      const formDataToSend = new FormData()
+      formDataToSend.append("user_id", finalUserId)
+
+      // Only append the file if it exists
+      if (documents.aadhaar) {
+          formDataToSend.append("aadhaar", documents.aadhaar)
+      }
+      if (documents.pan) {
+          formDataToSend.append("pan", documents.pan)
+      }
+
+      // This calls your Next.js API route, which forwards to FastAPI
+      const response = await fetch("/api/kyc/submit-documents", {
+        method: "POST",
+        body: formDataToSend,
+      })
+
+      if (!response.ok) {
+        const errText = await response.text()
+        throw new Error(errText || "Failed to upload documents")
+      }
+
       router.push("/kyc/results")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred during final submission")
+      console.error("Error uploading documents:", err)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const canProceed = documents.aadhaar && documents.pan && ocrResults.aadhaar && ocrResults.pan
+  // 4. Logic Check: Unlock button if (Aadhaar is Ready) OR (Pan is Ready)
+  const isAadhaarReady = documents.aadhaar && ocrResults.aadhaar
+  const isPanReady = documents.pan && ocrResults.pan
+  const canProceed = isAadhaarReady || isPanReady
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
@@ -147,8 +184,16 @@ export default function DocumentUploadPage() {
           <div className="text-center">
             <FileText className="h-16 w-16 text-blue-600 mx-auto mb-4" />
             <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Upload Identity Documents</h1>
-            <p className="text-gray-600 dark:text-gray-300">Please upload clear images of your Aadhaar and PAN cards</p>
+            
+            <div className="flex items-center justify-center gap-2 text-gray-600 dark:text-gray-300">
+                <AlertCircle className="h-4 w-4" />
+                <p>Please upload either your <strong>Aadhaar Card</strong> OR <strong>PAN Card</strong></p>
+            </div>
           </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg text-sm">{error}</div>
+          )}
 
           <Tabs defaultValue="aadhaar" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
@@ -203,16 +248,20 @@ export default function DocumentUploadPage() {
                       <div className="flex items-center space-x-4 p-4 bg-green-50 border border-green-200 rounded-lg">
                         <CheckCircle className="h-5 w-5 text-green-600" />
                         <span className="text-green-800">Aadhaar card uploaded successfully</span>
+                        {/* Option to clear and re-upload */}
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="ml-auto text-red-500 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => {
+                             setDocuments(prev => ({...prev, aadhaar: null}));
+                             setOcrResults(prev => ({...prev, aadhaar: null}));
+                          }}
+                        >
+                          Change
+                        </Button>
                       </div>
 
-                      {/* --- 3. ADDED: Error message display --- */}
-                      {errors.aadhaar && (
-                        <div className="flex items-center space-x-3 p-4 bg-red-50 border border-red-200 rounded-lg">
-                          <AlertCircle className="h-5 w-5 text-red-600" />
-                          <span className="text-red-800">{errors.aadhaar}</span>
-                        </div>
-                      )}
-                      
                       {processing.aadhaar ? (
                         <div className="flex items-center space-x-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                           <Scan className="h-5 w-5 text-blue-600 animate-spin" />
@@ -290,15 +339,19 @@ export default function DocumentUploadPage() {
                       <div className="flex items-center space-x-4 p-4 bg-green-50 border border-green-200 rounded-lg">
                         <CheckCircle className="h-5 w-5 text-green-600" />
                         <span className="text-green-800">PAN card uploaded successfully</span>
+                        {/* Option to clear and re-upload */}
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="ml-auto text-red-500 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => {
+                             setDocuments(prev => ({...prev, pan: null}));
+                             setOcrResults(prev => ({...prev, pan: null}));
+                          }}
+                        >
+                          Change
+                        </Button>
                       </div>
-
-                      {/* --- 3. ADDED: Error message display --- */}
-                      {errors.pan && (
-                        <div className="flex items-center space-x-3 p-4 bg-red-50 border border-red-200 rounded-lg">
-                          <AlertCircle className="h-5 w-5 text-red-600" />
-                          <span className="text-red-800">{errors.pan}</span>
-                        </div>
-                      )}
 
                       {processing.pan ? (
                         <div className="flex items-center space-x-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -335,8 +388,8 @@ export default function DocumentUploadPage() {
 
           {canProceed && (
             <div className="text-center">
-              <Button onClick={proceedToResults} size="lg" className="px-8">
-                Continue to Verification
+              <Button onClick={proceedToResults} size="lg" className="px-8" disabled={loading}>
+                {loading ? "Uploading..." : "Continue to Verification"}
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             </div>

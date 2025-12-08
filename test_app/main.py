@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -6,218 +6,105 @@ import shutil
 import numpy as np
 import cv2
 import io, re
+from motor.motor_asyncio import AsyncIOMotorClient
+from bson import Binary
+import uuid
+from datetime import datetime
+from dotenv import load_dotenv
 
-# --- MODIFIED SECTION ---
-# Try to import OCR libraries, use fallback if not available
-# (We keep this part, but we will ONLY use Google Vision for the endpoint
-# as your original code did)
+# Load environment variables
+load_dotenv()
+
+# ---------------------------
+# OCR & Vision Setup
+# ---------------------------
+# Try to import Google Vision
 try:
     from google.cloud import vision
     from google.cloud.vision_v1 import types
     GOOGLE_VISION_AVAILABLE = True
 except ImportError:
     GOOGLE_VISION_AVAILABLE = False
-    print("Google Cloud Vision not available, using fallback OCR")
+    print("WARNING: Google Cloud Vision not available. OCR features will be disabled.")
 
+# Try to import Tesseract (Fallback - Optional)
 try:
     import pytesseract
     from PIL import Image
     TESSERACT_AVAILABLE = True
 except ImportError:
     TESSERACT_AVAILABLE = False
-    print("Tesseract not available, using mock OCR")
-# --- END MODIFIED SECTION ---
+
+
+# ---------------------------
+# MongoDB Connection Setup
+# ---------------------------
+# Ensure you have MONGO_URI in your .env file
+MONGODB_URL = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+client = AsyncIOMotorClient(MONGODB_URL)
+db = client["forms"]
+users_collection = db["users"]
+videos_collection = db["videos"]
+documents_collection = db["documents"]
 
 
 # ---------------------------
 # Initialize FastAPI App
 # ---------------------------
-app = FastAPI(title="Face & Document Verification API",
-              description="API for face recognition, age/gender prediction, and document verification")
+app = FastAPI(
+    title="Face & Document Verification API",
+    description="API for face recognition, age/gender prediction, and document verification"
+)
 
-# Allow CORS (optional for frontend)
+# Allow CORS (Crucial for React/Next.js frontend)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # Change this to ["http://localhost:3000"] for better security in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ---------------------------
-# ROOT UI
-# ---------------------------
-@app.get("/", response_class=HTMLResponse)
-def root() -> str:
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Face & Document Verification API</title>
-        <style>
-            body { font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }
-            .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-            h1 { color: #333; text-align: center; }
-            .endpoint { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #007bff; }
-            .method { font-weight: bold; color: #007bff; }
-            .url { font-family: monospace; background: #e9ecef; padding: 2px 6px; border-radius: 3px; }
-            .docs-link { text-align: center; margin-top: 30px; }
-            .docs-link a { background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🎯 Face & Document Verification API</h1>
-            <p>This API provides endpoints for:</p>
-            <ul>
-                <li>Face capture and verification</li>
-                <li>Age/Gender prediction</li>
-                <li>PAN/Aadhaar document OCR extraction</li>
-            </ul>
-
-            <h2>Available Endpoints:</h2>
-            <div class="endpoint"><div class="method">POST</div><div class="url">/capture-selfie/</div></div>
-            <div class="endpoint"><div class="method">GET</div><div class="url">/embedding-from-selfie/</div></div>
-            <div class="endpoint"><div class="method">POST</div><div class="url">/verify-face/</div></div>
-            <div class="endpoint"><div class="method">POST</div><div class="url">/predict-age-gender/</div></div>
-            <div class="endpoint"><div class="method">POST</div><div class="url">/verify-document/</div></div>
-
-            <div class="docs-link"><a href="/docs">📖 Open Swagger Docs</a></div>
-        </div>
-    </body>
-    </html>
-    """
-    return html_content
-
-# ---------------------------
-# FACE RECOGNITION ENDPOINTS
-# ---------------------------
-@app.post("/capture-selfie/")
-async def capture_selfie(file: UploadFile = File(...)):
-    try:
-        file_location = os.path.join(os.getcwd(), "selfie.jpg")
-        with open(file_location, "wb") as f:
-            f.write(await file.read())
-        return {"message": "Selfie uploaded successfully", "filename": file.filename, "saved_as": "selfie.jpg"}
-    except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.get("/embedding-from-selfie/")
-def get_embedding():
-    if not os.path.exists("selfie.jpg"):
-        return JSONResponse(status_code=404, content={"error": "No selfie found. Please capture a selfie first."})
-    try:
-        dummy_embedding = np.random.rand(128).tolist()
-        return {"embedding": dummy_embedding, "message": "Face embedding generated successfully"}
-    except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-
-@app.post("/verify-face/")
-async def verify_face(reference_img: UploadFile = File(...)):
-    try:
-        with open("reference.jpg", "wb") as buffer:
-            shutil.copyfileobj(reference_img.file, buffer)
-
-        if not os.path.exists("selfie.jpg"):
-            return JSONResponse(status_code=404, content={"error": "No selfie found. Please capture a selfie first."})
-
-        similarity = float(np.random.uniform(0.3, 0.9))
-        result = "Face Verified: Match" if similarity > 0.6 else "Face Mismatch: Verification Failed"
-        return {"similarity": round(similarity, 4), "result": result, "message": "Face verification completed"}
-    except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-    finally:
-        if os.path.exists("reference.jpg"):
-            os.remove("reference.jpg")
-
-# ---------------------------
-# AGE/GENDER PREDICTION (Caffe)
-# ---------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(BASE_DIR, "age_gender", "models")
-
-AGE_PROTO = os.path.join(MODELS_DIR, "deploy_age.prototxt")
-AGE_MODEL = os.path.join(MODELS_DIR, "age_net.caffemodel")
-GENDER_PROTO = os.path.join(MODELS_DIR, "deploy_gender.prototxt")
-GENDER_MODEL = os.path.join(MODELS_DIR, "gender_net.caffemodel")
-
-AGE_LIST = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
-GENDER_LIST = ['Male', 'Female']
-
-
-def models_available() -> bool:
-    return all(os.path.exists(p) for p in [AGE_PROTO, AGE_MODEL, GENDER_PROTO, GENDER_MODEL])
-
-
-if models_available():
-    age_net = cv2.dnn.readNetFromCaffe(AGE_PROTO, AGE_MODEL)
-    gender_net = cv2.dnn.readNetFromCaffe(GENDER_PROTO, GENDER_MODEL)
-
-    @app.post("/predict-age-gender/")
-    async def predict_age_gender(file: UploadFile = File(...)):
-        contents = await file.read()
-        nparr = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-        if img is None:
-            return JSONResponse(content={"error": "Invalid image"}, status_code=400)
-
-        blob = cv2.dnn.blobFromImage(img, 1.0, (227, 227), (78.426, 87.768, 114.895), swapRB=False)
-
-        gender_net.setInput(blob)
-        gender_preds = gender_net.forward()
-        gender = GENDER_LIST[int(gender_preds[0].argmax())]
-
-        age_net.setInput(blob)
-        age_preds = age_net.forward()
-        age = AGE_LIST[int(age_preds[0].argmax())]
-
-        return {"age": age, "gender": gender}
-else:
-    @app.post("/predict-age-gender/")
-    async def predict_age_gender_unavailable(_: UploadFile = File(...)):
-        return JSONResponse(status_code=503, content={
-            "error": "Age/Gender models not found.",
-            "expected_paths": [AGE_PROTO, AGE_MODEL, GENDER_PROTO, GENDER_MODEL],
-        })
-
-# ---------------------------
-# DOCUMENT VERIFICATION (OCR)
-# --- THIS ENTIRE SECTION IS REVERTED TO YOUR ORIGINAL CODE ---
+# HELPER FUNCTIONS (OCR Logic)
 # ---------------------------
 if GOOGLE_VISION_AVAILABLE:
-    client = vision.ImageAnnotatorClient()
+    google_client = vision.ImageAnnotatorClient()
 else:
-    # Handle the case where Google Vision is not installed at all
-    client = None 
-    print("WARNING: Google Cloud Vision client not initialized. /verify-document/ will fail.")
+    google_client = None 
 
 def extract_text_from_image(file_bytes):
-    if not client:
-        raise Exception("Google Cloud Vision client is not available.")
-    image = types.Image(content=file_bytes)
-    response = client.text_detection(image=image)
-    texts = response.text_annotations
-    return texts[0].description if texts else ""
+    """
+    Sends image bytes to Google Cloud Vision and returns raw text.
+    """
+    if not google_client:
+        return ""
+    try:
+        image = types.Image(content=file_bytes)
+        response = google_client.text_detection(image=image)
+        texts = response.text_annotations
+        return texts[0].description if texts else ""
+    except Exception as e:
+        print(f"Google Vision API Error: {e}")
+        return ""
 
 def extract_fields(text):
     """
-    This is your original, "fairly good" regex function.
+    Extract fields using Regex.
     """
     data = {}
     
+    # 🔍 Debug: Print text to console
+    print(f"\n--- EXTRACTING FROM TEXT ---\n{text}\n----------------------------\n")
+
     # Your PAN regex
     pan_match = re.search(r'[A-Z]{5}[0-9]{4}[A-Z]', text)
     if pan_match:
-        # Key is 'pan_number' as in your original code
         data['pan_number'] = pan_match.group() 
     
     # Your Aadhaar regex
     aadhaar_match = re.search(r'\d{4}\s\d{4}\s\d{4}', text)
     if aadhaar_match:
-        # Key is 'aadhaar_number'
         data['aadhaar_number'] = aadhaar_match.group()
     
     # Your Name regex
@@ -232,30 +119,229 @@ def extract_fields(text):
         
     return data
 
+# ---------------------------
+# ROOT UI
+# ---------------------------
+@app.get("/", response_class=HTMLResponse)
+def root() -> str:
+    return """
+    <html>
+        <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+            <h1>🎯 KYC Verification API is Running</h1>
+            <p>FastAPI is connected to MongoDB and ready to process requests.</p>
+            <a href="/docs" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Swagger Docs</a>
+        </body>
+    </html>
+    """
 
-@app.post("/verify-document/")
-async def verify_document(file: UploadFile = File(...)):
-    """
-    This is your original endpoint, restored.
-    It returns the JSON format your React UI expects:
-    {"verified": ..., "fields": ..., "raw_text": ...}
-    """
-    if not GOOGLE_VISION_AVAILABLE or not client:
-         return JSONResponse(status_code=503, content={"error": "Google Cloud Vision is not installed or configured."})
+# ---------------------------
+# KYC ENDPOINTS
+# ---------------------------
+
+@app.post("/api/kyc/submit-user-data")
+async def submit_user_data(
+    fullName: str = Form(...),
+    email: str = Form(...),
+    phone: str = Form(...),
+    photograph: UploadFile = File(...)
+):
     try:
-        contents = await file.read()
-        text = extract_text_from_image(contents)
+        user_id = str(uuid.uuid4())
+        photo_content = await photograph.read()
+        
+        user_data = {
+            "user_id": user_id,
+            "fullName": fullName,
+            "email": email,
+            "phone": phone,
+            "photograph": Binary(photo_content),
+            "photograph_filename": photograph.filename,
+            "created_at": datetime.utcnow(),
+            "status": "pending"
+        }
+        
+        await users_collection.insert_one(user_data)
+        
+        return JSONResponse({
+            "user_id": user_id,
+            "message": "User data stored successfully"
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/kyc/submit-video")
+async def submit_video(
+    video: UploadFile = File(...),
+    user_id: str = Form(...)
+):
+    try:
+        video_content = await video.read()
+        
+        video_data = {
+            "user_id": user_id,
+            "video": Binary(video_content),
+            "video_filename": video.filename,
+            "uploaded_at": datetime.utcnow()
+        }
+        
+        result = await videos_collection.insert_one(video_data)
+        
+        # Update user status
+        await users_collection.update_one(
+            {"user_id": user_id},
+            {"$set": {"video_uploaded": True}}
+        )
+        
+        return JSONResponse({
+            "message": "Video stored successfully",
+            "video_id": str(result.inserted_id)
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ---------------------------
+# PREVIEW ENDPOINT (For React Frontend)
+# ---------------------------
+@app.post("/verify-document/")
+async def verify_document_endpoint(file: UploadFile = File(...)):
+    """
+    Endpoint for frontend to preview/verify document BEFORE final submission.
+    """
+    try:
+        # 1. Read file
+        content = await file.read()
+        
+        # 2. Extract Data
+        text = extract_text_from_image(content)
         data = extract_fields(text)
-        return {"verified": True if data else False, "fields": data, "raw_text": text}
-    except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        
+        # 3. Return extracted fields to frontend
+        return {
+            "verified": True if data else False,
+            "fields": data,
+            "raw_text": text[:200] 
+        }
+    except Exception as e:
+        print(f"Verification Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-# --- The blundered '/upload-document/' endpoint has been removed. ---
 
 # ---------------------------
-# RUN: uvicorn main:app --reload
+# SUBMIT DOCUMENTS (Updated for Optional Files)
 # ---------------------------
+@app.post("/api/kyc/submit-documents")
+async def submit_documents(
+    aadhaar: UploadFile = File(None), # 👈 Changed to Optional
+    pan: UploadFile = File(None),     # 👈 Changed to Optional
+    user_id: str = Form(...)
+):
+    """
+    1. Accepts Either Aadhaar OR Pan (or both).
+    2. Runs OCR on uploaded files.
+    3. Saves specific files to MongoDB.
+    """
+    try:
+        # 1. Validation: Ensure at least one is present
+        if not aadhaar and not pan:
+             return JSONResponse(status_code=400, content={"error": "Please upload at least one document (Aadhaar or PAN)."})
+
+        # 2. Initialize Data Structure
+        documents_data = {
+            "user_id": user_id,
+            "uploaded_at": datetime.utcnow(),
+            "ocr_results": {}
+        }
+        
+        aadhaar_extracted_data = {}
+        pan_extracted_data = {}
+        aadhaar_text_raw = ""
+        pan_text_raw = ""
+
+        # 3. Process Aadhaar (Only if user uploaded it)
+        if aadhaar:
+            aadhaar_content = await aadhaar.read()
+            # Store in DB object
+            documents_data["aadhaar_blob"] = Binary(aadhaar_content)
+            documents_data["aadhaar_filename"] = aadhaar.filename
+            
+            # Run OCR
+            if GOOGLE_VISION_AVAILABLE and google_client:
+                try:
+                    aadhaar_text_raw = extract_text_from_image(aadhaar_content)
+                    aadhaar_extracted_data = extract_fields(aadhaar_text_raw)
+                    documents_data["ocr_results"]["aadhaar"] = aadhaar_extracted_data
+                    documents_data["ocr_results"]["raw_text_aadhaar_preview"] = aadhaar_text_raw[:200]
+                except Exception as e:
+                    print(f"Aadhaar OCR Error: {e}")
+
+        # 4. Process PAN (Only if user uploaded it)
+        if pan:
+            pan_content = await pan.read()
+            # Store in DB object
+            documents_data["pan_blob"] = Binary(pan_content)
+            documents_data["pan_filename"] = pan.filename
+            
+            # Run OCR
+            if GOOGLE_VISION_AVAILABLE and google_client:
+                try:
+                    pan_text_raw = extract_text_from_image(pan_content)
+                    pan_extracted_data = extract_fields(pan_text_raw)
+                    documents_data["ocr_results"]["pan"] = pan_extracted_data
+                    documents_data["ocr_results"]["raw_text_pan_preview"] = pan_text_raw[:200]
+                except Exception as e:
+                    print(f"PAN OCR Error: {e}")
+
+        # 5. Insert into MongoDB
+        result = await documents_collection.insert_one(documents_data)
+        
+        # 6. Determine verification status
+        # Success if AT LEAST ONE document returned extracted data
+        is_verified = (aadhaar_extracted_data) or (pan_extracted_data)
+        
+        new_status = "verified_by_ocr" if is_verified else "documents_uploaded"
+            
+        await users_collection.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "documents_uploaded": True, 
+                "status": new_status,
+                "verification_data": documents_data["ocr_results"]
+            }}
+        )
+        
+        return JSONResponse({
+            "message": "Documents processed and stored",
+            "document_id": str(result.inserted_id),
+            "verification_status": new_status,
+            "extracted_data": {
+                "aadhaar": aadhaar_extracted_data,
+                "pan": pan_extracted_data
+            }
+        })
+
+    except Exception as e:
+        print(f"Error in submit_documents: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-# set HTTPS_PROXY=http://your-proxy-address:port
-# set HTTP_PROXY=http://your-proxy-address:port
+@app.get("/api/kyc/user/{user_id}")
+async def get_user_data(user_id: str):
+    """ Retrieves User Data """
+    try:
+        user = await users_collection.find_one({"user_id": user_id})
+        if not user:
+            return JSONResponse(status_code=404, content={"error": "User not found"})
+        
+        user["_id"] = str(user["_id"])
+        if "created_at" in user: user["created_at"] = str(user["created_at"])
+        if "photograph" in user: del user["photograph"]
+        
+        return JSONResponse(user)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+# ---------------------------
+# TO RUN: uvicorn main:app --reload --port 8000
+# ---------------------------
