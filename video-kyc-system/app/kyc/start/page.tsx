@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { Fingerprint, ArrowLeft, AlertCircle, Upload, X } from "lucide-react"
+import { Fingerprint, ArrowLeft, AlertCircle } from "lucide-react"
 import Link from "next/link"
 
 export default function KYCStartPage() {
@@ -20,71 +20,14 @@ export default function KYCStartPage() {
     email: "",
     phone: "",
     consent: false,
-    photograph: null as File | null,
   })
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      setFormData({ ...formData, photograph: file })
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setPhotoPreview(reader.result as string)
-      }
-      reader.readAsDataURL(file)
-    }
-  }
-
-  const handleRemovePhoto = () => {
-    setFormData({ ...formData, photograph: null })
-    setPhotoPreview(null)
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.consent || !formData.photograph) return
-
-    setLoading(true)
-    setError(null)
-
-    try {
-      const formDataToSend = new FormData()
-      formDataToSend.append("fullName", formData.fullName)
-      formDataToSend.append("email", formData.email)
-      formDataToSend.append("phone", formData.phone)
-      formDataToSend.append("photograph", formData.photograph)
-
-      const response = await fetch("/api/kyc/submit-user-data", {
-        method: "POST",
-        body: formDataToSend,
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to submit user data")
-      }
-
-      const result = await response.json()
-
-      // Store user_id from FastAPI response in sessionStorage
-      sessionStorage.setItem("userId", result.user_id)
-      sessionStorage.setItem(
-        "kycUserData",
-        JSON.stringify({
-          fullName: formData.fullName,
-          email: formData.email,
-          phone: formData.phone,
-        }),
-      )
-
+    if (formData.consent) {
+      // Store user data in session/context
+      sessionStorage.setItem("kycUserData", JSON.stringify(formData))
       router.push("/kyc/video-capture")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred")
-      console.error("Error submitting user data:", err)
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -119,10 +62,6 @@ export default function KYCStartPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg text-sm">{error}</div>
-              )}
-
               <div className="space-y-2">
                 <Label htmlFor="fullName">Full Name *</Label>
                 <Input
@@ -159,49 +98,6 @@ export default function KYCStartPage() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="photograph">Photograph *</Label>
-                <div className="relative">
-                  <input
-                    id="photograph"
-                    type="file"
-                    accept="image/*"
-                    required
-                    onChange={handlePhotoChange}
-                    className="hidden"
-                  />
-                  {!photoPreview ? (
-                    <label
-                      htmlFor="photograph"
-                      className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 dark:bg-gray-800 dark:border-gray-600 dark:hover:bg-gray-700 transition-colors"
-                    >
-                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                        <Upload className="h-8 w-8 text-gray-400 mb-2" />
-                        <p className="text-sm text-gray-700 dark:text-gray-300">
-                          <span className="font-semibold">Click to upload</span> or drag and drop
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">PNG, JPG, GIF up to 10MB</p>
-                      </div>
-                    </label>
-                  ) : (
-                    <div className="relative w-full h-40 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800">
-                      <img
-                        src={photoPreview || "/placeholder.svg"}
-                        alt="Photograph preview"
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleRemovePhoto}
-                        className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full p-1 transition-colors"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                 <div className="flex items-start space-x-3">
                   <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5" />
@@ -228,13 +124,8 @@ export default function KYCStartPage() {
                 </Label>
               </div>
 
-              <Button
-                type="submit"
-                className="w-full"
-                size="lg"
-                disabled={!formData.consent || !formData.photograph || loading}
-              >
-                {loading ? "Submitting..." : "Continue to Video Verification"}
+              <Button type="submit" className="w-full" size="lg" disabled={!formData.consent}>
+                Continue to Video Verification
               </Button>
             </form>
           </CardContent>
